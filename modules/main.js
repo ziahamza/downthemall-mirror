@@ -6,6 +6,10 @@
 const Preferences = require("preferences");
 const Version = require("version");
 const {defer} = require("support/defer");
+const {parse} = require("support/metalinker");
+const Mediator = require("support/mediator");
+const DTA = require("api");
+const Utils = require('utils');
 
 /**
  * AboutModule
@@ -49,14 +53,83 @@ AboutModule.prototype = {
 	getURIFlags: function(aURI) Ci.nsIAboutModule.URI_SAFE_FOR_UNTRUSTED_CONTENT
 };
 
+function MetalinkInterceptModule() {
+}
+MetalinkInterceptModule.prototype = {
+	classDescription: "DownThemAll! metalink integration",
+	classID: Components.ID('{4b048560-c789-11e1-9b21-0800200c9a67}'),
+	contractID: '@mozilla.org/streamconv;1?from=application/metalink4+xml&to=*/*',
+	QueryInterface: XPCOMUtils.generateQI([
+		Ci.nsISupports,
+		Ci.nsIStreamConverter,
+		Ci.nsIContentSniffer,
+		Ci.nsIStreamListener,
+		Ci.nsIRequestObserver
+	]), 
+	xpcom_categories: ["net-content-sniffers", "content-sniffing-services", "@mozilla.org/streamconv;1"],
+	filterProtos: ['http', 'https'],
+
+	isValidMetalink: function(uri) {
+		return this.filterProtos.indexOf(uri.scheme) != -1 && (/\.(meta4|metalink)$/i).test(uri.spec);
+	},
+	getMIMETypeFromContent: function(req, data, length) {
+		req.QueryInterface(Ci.nsIChannel);
+		if (this.isValidMetalink(req.URI)) {
+			if (req instanceof Ci.nsIHttpChannel) {
+                req.setResponseHeader("Content-Disposition", "", false);
+            }
+			return "application/metalink4+xml";
+		}
+		
+		throw Cr.NS_ERROR_NOT_AVAILABLE;
+	},
+	asyncConvertData: function(fromType, toType, listener, ctx) {  
+		this.listener = listener
+	},
+	convert: function() {
+		throw Cr.NS_ERROR_NOT_IMPLEMENTED;
+	},
+	
+	onDataAvailable: function(aRequest, aContext, aInputStream, aOffset, aCount) {
+	},
+	
+	onStartRequest: function(aRequest, aCtx) {
+		var uri = aRequest.QueryInterface(Ci.nsIChannel).URI;
+		let window = Mediator.getMostRecent();
+		parse(uri, "", function(res, ex) {
+			if (ex) {
+				throw ex;
+			}
+			if (!res.downloads.length) {
+				throw new Error(_('mlnodownloads'));
+			}
+			window.openDialog(
+				'chrome://dta/content/dta/manager/metaselect.xul',
+				'_blank',
+				'chrome,centerscreen,dialog=yes,modal',
+				res.downloads,
+				res.info
+			);
+			Utils.filterInSitu(res.downloads, function(d) { return d.selected; });
+			if (res.downloads.length) {
+				DTA.sendLinksToManager(window, res.info.start, res.downloads);
+			}
+		});
+	},
+	
+	onStopRequest: function() {
+	}
+	
+};
 function registerComponents() {
-	for (let [,cls] in Iterator([AboutModule])) {
+	for (let [,cls] in Iterator([AboutModule, MetalinkInterceptModule])) {
 		const factory = {
 			_cls: cls,
 			createInstance: function(outer, iid) {
 				if (outer) {
 					throw Cr.NS_ERROR_NO_AGGREGATION;
 				}
+				
 				return new cls();
 			}
 		};
@@ -64,7 +137,14 @@ function registerComponents() {
 		unload(function() {
 			Cm.unregisterFactory(factory._cls.prototype.classID, factory);
 		});
+		
+		if (cls.prototype.xpcom_categories) {
+			for each (let category in cls.prototype.xpcom_categories) {
+				Services.catman.addCategoryEntry(category, cls.prototype.classDescription, cls.prototype.contractID, false, true);
+			}
+		}
 	}
+	
 }
 
 function migrate() {

@@ -71,7 +71,7 @@ var metalink_asyncTestFile = function(files, cb) {
 	for (var i = 0; i < files.length; i++) {
 		(function(f) {
 			asyncTest(f, function() {
-				parse(getFile(f), "", function(data, ex) {
+				parse(Services.io.newFileURI(getFile(f)), "", function(data, ex) {
 					start();
 					cb(data, ex);
 				});
@@ -138,7 +138,7 @@ function metalink_getExportedResults(downloads, cb) {
 
 	var coll = new metalink_downloadCollection(downloads);
 	exportToMetalink4File(coll, document, file, Prefs.permissions);
-	parse(file, "", function(data, ex) {
+	parse(Services.io.newFileURI(file), "", function(data, ex) {
 		cb(data, ex);
 	});
 }
