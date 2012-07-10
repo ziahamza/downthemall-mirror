@@ -6,7 +6,6 @@
 const Preferences = require("preferences");
 const Version = require("version");
 const {defer} = require("support/defer");
-const {parse} = require("support/metalinker");
 const Mediator = require("support/mediator");
 const DTA = require("api");
 const Utils = require('utils');
@@ -54,6 +53,7 @@ AboutModule.prototype = {
 };
 
 function MetalinkInterceptModule() {
+	this.parse = require('support/metalinker').parse;
 }
 MetalinkInterceptModule.prototype = {
 	classDescription: "DownThemAll! metalink integration",
@@ -94,9 +94,10 @@ MetalinkInterceptModule.prototype = {
 	},
 	
 	onStartRequest: function(aRequest, aCtx) {
-		var uri = aRequest.QueryInterface(Ci.nsIChannel).URI;
+		let uri = aRequest.QueryInterface(Ci.nsIChannel).URI;
 		let window = Mediator.getMostRecent();
-		parse(uri, "", function(res, ex) {
+		aRequest.cancel(Cr.NS_BINDING_ABORTED);
+		this.parse(uri, "", function(res, ex) {
 			if (ex) {
 				throw ex;
 			}
