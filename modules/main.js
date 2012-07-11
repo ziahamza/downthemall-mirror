@@ -76,11 +76,10 @@ MetalinkInterceptModule.prototype = {
 		req.QueryInterface(Ci.nsIChannel);
 		if (this.isValidMetalink(req.URI)) {
 			if (req instanceof Ci.nsIHttpChannel) {
-                req.setResponseHeader("Content-Disposition", "", false);
-            }
+				req.setResponseHeader("Content-Disposition", "", false);
+			}
 			return "application/metalink4+xml";
 		}
-		
 		throw Cr.NS_ERROR_NOT_AVAILABLE;
 	},
 	asyncConvertData: function(fromType, toType, listener, ctx) {  
@@ -91,36 +90,56 @@ MetalinkInterceptModule.prototype = {
 	},
 	
 	onDataAvailable: function(aRequest, aContext, aInputStream, aOffset, aCount) {
+		this.pipe.outputStream.writeFrom(aInputStream, aCount);
 	},
-	
 	onStartRequest: function(aRequest, aCtx) {
-		let uri = aRequest.QueryInterface(Ci.nsIChannel).URI;
-		let window = Mediator.getMostRecent();
-		aRequest.cancel(Cr.NS_BINDING_ABORTED);
-		this.parse(uri, "", function(res, ex) {
-			if (ex) {
-				throw ex;
+		this.pipe = new Instances.Pipe(false, true, 1<<20, 20, null);
+	},	
+	onStopRequest: function(aRequest, aCtx, aStatusCode) {
+		const {parse} = require("support/metalinker");
+		
+		try {
+			this.listener.onStopRequest(aRequest, aCtx, aStatusCode);
+		}
+		catch (ex) {}
+		
+		try {
+			let is = new Instances.BinaryInputStream(this.pipe.inputStream);
+			let du = "data:application/metalink4+xml,";
+			for (let a; a = is.available();) {
+				du += is.readBytes(a);
 			}
-			if (!res.downloads.length) {
-				throw new Error(_('mlnodownloads'));
-			}
-			window.openDialog(
-				'chrome://dta/content/dta/manager/metaselect.xul',
-				'_blank',
-				'chrome,centerscreen,dialog=yes,modal',
-				res.downloads,
-				res.info
-			);
-			Utils.filterInSitu(res.downloads, function(d) { return d.selected; });
-			if (res.downloads.length) {
-				DTA.sendLinksToManager(window, res.info.start, res.downloads);
-			}
-		});
-	},
-	
-	onStopRequest: function() {
+			parse(Services.io.newURI(du, null, null), "", function(res, ex) {
+				if (ex) {
+					log(LOG_ERROR, "failed", ex);
+					throw ex;
+				}
+				if (!res.downloads.length) {
+					log(LOG_ERROR, "no downloads");
+					throw new Error(_('mlnodownloads'));
+				}
+				let window = Mediator.getMostRecent();
+				window.openDialog(
+					'chrome://dta/content/dta/manager/metaselect.xul',
+					'_blank',
+					'chrome,centerscreen,dialog=yes,modal',
+					res.downloads,
+					res.info
+				);
+				Utils.filterInSitu(res.downloads, function(d) { return d.selected; });
+				if (res.downloads.length) {
+					DTA.sendLinksToManager(window, res.info.start, res.downloads);
+				}
+			});
+			this.pipe.outputStream.close();
+			is.close();
+			this.listener = null;
+			this.pipe = null;
+		}
+		catch (ex) {
+			log(LOG_ERROR, "ml", ex);
+		}
 	}
-	
 };
 function registerComponents() {
 	for (let [,cls] in Iterator([AboutModule, MetalinkInterceptModule])) {
